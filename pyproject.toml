@@ -1,0 +1,33 @@
+[project]
+name = "mediapipe-pyxel-demo"
+version = "0.1.0"
+description = "MediaPipe + Pyxel demo with pluggable games and input providers"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Your Name" }
+]
+dependencies = [
+  "mediapipe>=0.10.21",
+  "pyxel>=2.0.0",
+  # MediaPipe を使う入力プロバイダは現状未実装のため、依存は外しています。
+  # 必要になったら再度追加してください。
+]
+
+[project.scripts]
+mediapipe-pyxel-demo = "mediapipe_pyxel_demo.__main__:main"
+
+[project.entry-points."mediapipe_pyxel_demo.games"]
+# Example for external plugin registration (kept here for reference):
+# game_1 = "mediapipe_pyxel_demo.games.game_1:GAME_CLASS"
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

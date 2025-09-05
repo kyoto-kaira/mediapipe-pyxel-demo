@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+import queue
+from queue import Queue
+from typing import Any, List, Optional
+
+from .events import Action, InputEvent
+
+
+class App:
+    def __init__(self, game: Any, providers: List[Any], scale: int = 3) -> None:
+        self.game = game
+        self.providers = providers
+        self.scale = scale
+        self.events: "Queue[InputEvent]" = Queue()
+        self._px = None  # Pyxel モジュール（遅延読み込み）
+        self._should_quit = False
+
+    # --- ライフサイクル ---
+
+    def run(self) -> None:
+        import pyxel  # ユニットテスト時の import 失敗を避けるため遅延インポート
+
+        self._px = pyxel
+        # スレッド型プロバイダを起動
+        for p in self.providers:
+            if hasattr(p, "start"):
+                try:
+                    p.start(self.events)
+                except Exception:
+                    pass
+
+        try:
+            pyxel.init(
+                self.game.width,
+                self.game.height,
+                title="MediaPipe × Pyxel Demo",
+                scale=self.scale,
+            )
+        except TypeError:
+            pyxel.init(
+                self.game.width,
+                self.game.height,
+                title="MediaPipe × Pyxel Demo",
+            )
+        pyxel.run(self._update, self._draw)
+
+    def _update(self) -> None:
+        assert self._px is not None
+        # 1フレーム毎に Pyxel へアクセスが必要なプロバイダをポーリング
+        for p in self.providers:
+            if hasattr(p, "poll"):
+                try:
+                    p.poll(self._px, self.events)
+                except Exception:
+                    pass
+
+        # 入力イベントキューを空にしつつゲームへ転送
+        while True:
+            try:
+                e = self.events.get_nowait()
+            except queue.Empty:
+                break
+            if e.action == Action.QUIT:
+                self._should_quit = True
+            else:
+                try:
+                    self.game.on_event(e)
+                except Exception:
+                    pass
+
+        if self._should_quit:
+            # ESC（KeyboardProvider 側の対応）やウィンドウクローズで終了を促す
+            # Pyxel は直接 quit を呼べないため、ここではフラグのみ保持
+            pass
+
+        # ゲームロジックの更新
+        try:
+            self.game.update()
+        except Exception:
+            pass
+
+        # ゲーム側からのゲーム切り替え要求に対応
+        # （メニューから選択されたゲームへ切り替え）
+        try:
+            next_game = getattr(self.game, "next_game", None)
+        except Exception:
+            next_game = None
+        if next_game is not None:
+            # 次のゲームへ切り替え
+            self.game = next_game
+
+    def _draw(self) -> None:
+        assert self._px is not None
+        try:
+            self.game.draw(self._px)
+        except Exception:
+            # 描画で例外が起きても画面をクリアして安全に継続
+            self._px.cls(0)
