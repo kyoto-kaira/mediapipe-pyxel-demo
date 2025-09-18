@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
-import cv2
-import numpy as np
+import threading
+import time
 from queue import Queue
-from typing import Optional, Any
+from typing import Any, Optional, Tuple
+
+import cv2
 
 from ..events import Action, InputEvent
 
@@ -22,11 +24,10 @@ class FaceProvider:
     def __init__(
         self,
         camera_index: int = 0,
-        blink_threshold: float = 0.6,
-        mouth_threshold: float = 0.4,
+        blink_threshold: float = 0.5,
+        mouth_threshold: float = 0.3,
         frame_width: int = 80,
         frame_height: int = 60,
-        fps: int = 30,
         frame_skip: int = 0,  # 任意のフレームおきに処理する (0なら全フレーム)
     ) -> None:
 
@@ -40,10 +41,14 @@ class FaceProvider:
             raise RuntimeError(f"Cannot open camera index {camera_index}.")
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width)
         self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_height)
-        self._cap.set(cv2.CAP_PROP_FPS, fps)
         self._frame_skip = max(0, int(frame_skip))
-        self._frame_id = -1
-        self._ts_ms = 0
+        self._skip_stride = self._frame_skip + 1
+        self._time_base = time.monotonic()
+        self._result_lock = threading.Lock()
+        self._latest_result: Optional[Tuple[Any, int]] = None
+        self._last_processed_ts: int = -1
+        self._running = False
+        self._worker: Optional[threading.Thread] = None
 
         # FaceLandmarkerを作成
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -52,19 +57,66 @@ class FaceProvider:
             base_options=python.BaseOptions(model_asset_path=model_path),
             output_face_blendshapes=True,
             num_faces=1,
-            running_mode=vision.RunningMode.VIDEO,
+            running_mode=vision.RunningMode.LIVE_STREAM,
+            result_callback=self._on_async_result,
         )
         self._detector = vision.FaceLandmarker.create_from_options(options)
 
         self._mp_image_cls = mp.Image
         self._mp_format = mp.ImageFormat.SRGB
 
-    def detect_landmarks(self) -> Any:
-        image = self._read_frame()
-        if image is None:
-            return None
-        self._ts_ms += 33
-        return self._detector.detect_for_video(image, self._ts_ms)
+    def start(self, _out_queue: Queue | None = None) -> None:
+        if self._running:
+            return
+        self._running = True
+        self._worker = threading.Thread(target=self._run_worker, name="FaceProviderWorker", daemon=True)
+        self._worker.start()
+
+    def stop(self) -> None:
+        self._running = False
+        worker = self._worker
+        if worker and worker.is_alive():
+            worker.join(timeout=1.0)
+        self._worker = None
+
+    def _run_worker(self) -> None:
+        skip_counter = 0
+        while self._running:
+            if self._frame_skip > 0:
+                grabbed = self._cap.grab()
+                if not grabbed:
+                    time.sleep(0.01)
+                    continue
+                skip_counter = (skip_counter + 1) % self._skip_stride
+                if skip_counter != 0:
+                    continue
+                ok, frame_bgr = self._cap.retrieve()
+            else:
+                ok, frame_bgr = self._cap.read()
+            if not ok or frame_bgr is None:
+                time.sleep(0.01)
+                continue
+
+            rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            mp_image = self._mp_image_cls(image_format=self._mp_format, data=rgb)
+            timestamp_ms = int((time.monotonic() - self._time_base) * 1000)
+
+            try:
+                self._detector.detect_async(mp_image, timestamp_ms)
+            except Exception:
+                time.sleep(0.01)
+                continue
+
+    def _consume_latest_result(self) -> Optional[Tuple[Any, int]]:
+        with self._result_lock:
+            latest = self._latest_result
+            if not latest:
+                return None
+            result, ts_ms = latest
+            if ts_ms == self._last_processed_ts:
+                return None
+            self._last_processed_ts = ts_ms
+        return result, ts_ms
 
     def poll(self, px, out_queue: Queue) -> None:  # type: ignore[override]
         # Escキー（仮）
@@ -75,12 +127,19 @@ class FaceProvider:
             except Exception:
                 pass
 
-        self._frame_id += 1
-        if self._frame_skip > 0 and (self._frame_id % (self._frame_skip + 1)) != 0:
-            _ = self._read_frame()
+        if not self._running:
+            self.start()
+
+        payload = self._consume_latest_result()
+        if payload is None:
             return
 
-        result = self.detect_landmarks()
+        result, _ = payload
+        if result is None:
+            self._last_blink_active = False
+            self._last_mouth_active = False
+            return
+
         landmarks = getattr(result, "face_landmarks", None)
         if not landmarks:
             self._last_blink_active = False
@@ -102,12 +161,9 @@ class FaceProvider:
                 out_queue.put(InputEvent(action=Action.ACTION2))
             self._last_mouth_active = mouth_active
 
-    def _read_frame(self) -> Optional[mp.Image]:
-        ok, frame_bgr = self._cap.read()
-        if not ok or frame_bgr is None:
-            return None
-        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        return self._mp_image_cls(image_format=self._mp_format, data=rgb)
+    def _on_async_result(self, result: Any, _output_image: mp.Image, timestamp_ms: int) -> None:
+        with self._result_lock:
+            self._latest_result = (result, timestamp_ms)
 
     def _get_blendshape(self, result: Any, name: str) -> Optional[float]:
         try:
@@ -165,6 +221,7 @@ class FaceProvider:
 
     def __del__(self) -> None:
         try:
+            self.stop()
             if hasattr(self, "_cap") and self._cap is not None:
                 self._cap.release()
         except Exception:
