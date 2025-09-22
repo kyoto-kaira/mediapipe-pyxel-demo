@@ -13,6 +13,10 @@ def _build_provider(name: str):
         from .input_providers.keyboard import KeyboardProvider
 
         return KeyboardProvider()
+    if name == "mediapipe_face":
+        from .input_providers.mediapipe_face import FaceProvider
+
+        return FaceProvider()
     raise SystemExit(f"Unknown provider: {name}")
 
 
@@ -20,7 +24,7 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="MediaPipe × Pyxel Demo")
     # デフォルトでメニュー（ゲーム選択画面）を起動する
     parser.add_argument("--game", default="menu", help="Game name (discovered)")
-    parser.add_argument("--provider", default="keyboard", choices=["keyboard"], help="Input provider")
+    parser.add_argument("--provider", default="mediapipe_face", choices=["keyboard", "mediapipe_face"], help="Input provider")
     parser.add_argument("--scale", type=int, default=3, help="Pyxel window scale")
     parser.add_argument("--list", action="store_true", help="List discovered games and exit")
     parser.add_argument("--version", action="store_true", help="Print version and exit")
