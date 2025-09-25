@@ -11,6 +11,7 @@ class KeyboardProvider:
     Pyxel のキーボード状態をポーリングするデバッグ用入力プロバイダ。
     - Space -> ACTION1
     - Enter -> ACTION2
+    - Shift -> ACTION3
     - Esc   -> QUIT
     """
 
@@ -26,11 +27,14 @@ class KeyboardProvider:
 
         space = px.btnp(px.KEY_SPACE)
         enter = px.btnp(px.KEY_RETURN)
+        shift = px.btnp(px.KEY_SHIFT)
         esc = px.btnp(px.KEY_ESCAPE)
 
         if space:
             out_queue.put(InputEvent(action=Action.ACTION1))
         if enter:
             out_queue.put(InputEvent(action=Action.ACTION2))
+        if shift:
+            out_queue.put(InputEvent(action=Action.ACTION3))
         if esc:
             out_queue.put(InputEvent(action=Action.QUIT))
