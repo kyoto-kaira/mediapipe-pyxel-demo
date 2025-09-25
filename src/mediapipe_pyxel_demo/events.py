@@ -10,6 +10,7 @@ class Action(Enum):
     # ゲーム内で扱う抽象アクション
     ACTION1 = auto()   # 主ボタン（ジャンプなど）
     ACTION2 = auto()   # サブボタン（任意機能）
+    ACTION3 = auto()   # サブボタン2 (任意機能)
     QUIT = auto()      # 終了要求
 
 
