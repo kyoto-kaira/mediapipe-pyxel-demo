@@ -13,6 +13,8 @@ dependencies = [
   "pyxel>=2.0.0",
   # MediaPipe を使う入力プロバイダは現状未実装のため、依存は外しています。
   # 必要になったら再度追加してください。
+  "pyxel-universal-font>=1.1.1",
+  "simpleaudio>=1.0.4",
 ]
 
 [project.scripts]
