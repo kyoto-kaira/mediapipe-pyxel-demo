@@ -11,8 +11,8 @@ class ReactionGame:
     - 笑顔でタイトル開始・リスタート
     """
 
-    width = 160
-    height = 120
+    width = 256
+    height = 224
 
     def __init__(self) -> None:
         self.reset()
