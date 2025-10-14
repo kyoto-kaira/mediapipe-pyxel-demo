@@ -62,17 +62,23 @@ class App:
             except queue.Empty:
                 break
             if e.action == Action.QUIT:
-                self._should_quit = True
+                # ゲームに先に渡して、ゲーム側で処理するか判断させる
+                try:
+                    self.game.on_event(e)
+                except Exception:
+                    pass
+                # ゲームが next_game を設定しなかった場合のみ終了フラグを立てる
+                try:
+                    next_game = getattr(self.game, "next_game", None)
+                except Exception:
+                    next_game = None
+                if next_game is None:
+                    self._should_quit = True
             else:
                 try:
                     self.game.on_event(e)
                 except Exception:
                     pass
-
-        if self._should_quit:
-            # ESC（KeyboardProvider 側の対応）やウィンドウクローズで終了を促す
-            # Pyxel は直接 quit を呼べないため、ここではフラグのみ保持
-            pass
 
         # ゲームロジックの更新
         try:
@@ -89,6 +95,12 @@ class App:
         if next_game is not None:
             # 次のゲームへ切り替え
             self.game = next_game
+            self._should_quit = False
+
+        if self._should_quit:
+            # ESC（KeyboardProvider 側の対応）やウィンドウクローズで終了を促す
+            # Pyxel は直接 quit を呼べないため、ここではフラグのみ保持
+            pass
 
     def _draw(self) -> None:
         assert self._px is not None
