@@ -5,6 +5,7 @@ import random
 
 from ...events import Action, InputEvent
 from ...registry import discover_games
+import pyxel
 
 
 class MenuGame:
@@ -45,6 +46,28 @@ class MenuGame:
             [rnd.randrange(0, self.width), rnd.randrange(0, self.height // 2), 0.1 + rnd.random() * 0.5]
             for _ in range(60)
         ]
+        # 効果音の初期化フラグ（Pyxel 初期化後に設定）
+        self._sfx_ready = False
+
+    def _setup_sounds(self) -> None:
+        # シンプルなビープ音をサウンドスロット5に設定
+        pyxel.sounds[5].set(
+            notes="c4",
+            tones="t",
+            volumes="4",
+            effects="n",
+            speed=10,
+        )
+        self._sfx_ready = True
+
+    def _ensure_sounds(self) -> None:
+        if self._sfx_ready:
+            return
+        try:
+            self._setup_sounds()
+        except Exception:
+            # Pyxel 未初期化や他要因で失敗しても無視（次フレームで再試行）
+            self._sfx_ready = False
 
     # --- 入力 ---
     def on_event(self, e: InputEvent) -> None:
@@ -52,6 +75,13 @@ class MenuGame:
             return
         if e.action == Action.ACTION1:
             self.idx = (self.idx + 1) % len(self.items)
+            # カーソル移動時の効果音（初回は遅延初期化）
+            self._ensure_sounds()
+            try:
+                if self._sfx_ready:
+                    pyxel.play(1, 5)
+            except Exception:
+                pass
         elif e.action == Action.ACTION2:
             # 選択したゲームをインスタンス化して切り替え要求
             _, cls, _ = self.items[self.idx]
