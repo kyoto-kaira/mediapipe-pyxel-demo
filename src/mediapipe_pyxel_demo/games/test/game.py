@@ -41,6 +41,7 @@ class TestGame:
     height = 224
 
     def __init__(self) -> None:
+        self.next_game = None
         self.counts: Dict[Action, int] = {Action.ACTION1: 0, Action.ACTION2: 0, Action.ACTION3: 0}
         self.flash: Dict[Action, Flash] = {
             Action.ACTION1: Flash(),
@@ -52,10 +53,18 @@ class TestGame:
 
     # --- 入力 ---
     def on_event(self, e: InputEvent) -> None:
+        if e.action == Action.QUIT:
+            self._return_to_menu()
+            return
         if e.action in (Action.ACTION1, Action.ACTION2, Action.ACTION3):
             self.counts[e.action] = self.counts.get(e.action, 0) + 1
             self.flash[e.action].trigger()
             self.last_event = f"{e.action.name}  val={e.value:.2f}"
+
+    def _return_to_menu(self) -> None:
+        from ..menu.game import MenuGame
+
+        self.next_game = MenuGame()
 
     # --- 更新 ---
     def update(self) -> None:
@@ -118,4 +127,3 @@ class TestGame:
 
 # レジストリが参照する公開シンボル
 GAME_CLASS = TestGame
-

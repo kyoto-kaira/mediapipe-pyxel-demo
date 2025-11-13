@@ -15,12 +15,14 @@ class FaceProvider:
     - まばたき -> ACTION1 (Space)
     - 口の開き具合 -> ACTION2 (Enter)
     - 笑顔 -> ACTION3 (Shift)
-    - Escキー -> QUIT (Esc)
+    - Backspaceキー -> QUIT (Backspace)
     """
 
     def __init__(
         self,
         camera_index: int = 0,
+        player_index: int | None = None,
+        event_note: str | None = None,
         blink_threshold: float = 0.5,
         mouth_threshold: float = 0.3,
         frame_width: int = 80,
@@ -31,7 +33,7 @@ class FaceProvider:
         use_mjpeg: bool = True,
         hysteresis: float = 0.05,  # ON/OFFの二段閾値（0で無効）
         smile_threshold: float = 0.5,
-        delegate: str | None = None,  # 'CPU' or 'GPU' を指定可能（Noneでデフォルト）
+        delegate: str | None = "GPU",  # 'CPU' or 'GPU' を指定可能（Noneでデフォルト）
     ) -> None:
 
         # 閾値（ヒステリシス対応）
@@ -44,9 +46,17 @@ class FaceProvider:
         self._smile_on = float(smile_threshold)
         self._smile_off = float(max(0.0, smile_threshold - hysteresis))
         self._last_smile_active = False
+        self._player_index = player_index
+        self._camera_index = int(camera_index)
+        if event_note is not None:
+            self._event_note = str(event_note)
+        elif player_index is not None:
+            self._event_note = f"player:{int(player_index)}"
+        else:
+            self._event_note = f"camera:{self._camera_index}"
 
         # カメラ初期化（軽量化のためFPS/バッファ等を設定）
-        self._cap = cv2.VideoCapture(camera_index)
+        self._cap = cv2.VideoCapture(self._camera_index)
         if not self._cap.isOpened():
             raise RuntimeError(f"Cannot open camera index {camera_index}.")
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width)
@@ -81,6 +91,7 @@ class FaceProvider:
         self._detector = None  # type: ignore[assignment]
         self._mp_image_cls = None  # type: ignore[assignment]
         self._mp_format = None  # type: ignore[assignment]
+        self._use_srgba = False  # GPU delegate時は SRGBA、CPU時は SRGB
 
         # モデルパスは保持
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -101,6 +112,7 @@ class FaceProvider:
                 raise RuntimeError(f"Failed to import MediaPipe: {e}") from e
 
             base_opts_kwargs: dict[str, Any] = {"model_asset_path": self._model_path}
+            is_gpu = False
             if self._delegate:
                 # 'CPU' or 'GPU' を想定（未知の値は無視）
                 try:
@@ -108,6 +120,7 @@ class FaceProvider:
                         base_opts_kwargs["delegate"] = python.BaseOptions.Delegate.CPU
                     elif self._delegate.upper() == "GPU":
                         base_opts_kwargs["delegate"] = python.BaseOptions.Delegate.GPU
+                        is_gpu = True
                 except Exception:
                     pass
 
@@ -121,7 +134,8 @@ class FaceProvider:
             self._detector = vision.FaceLandmarker.create_from_options(options)
 
             self._mp_image_cls = mp.Image
-            self._mp_format = mp.ImageFormat.SRGB
+            self._use_srgba = is_gpu
+            self._mp_format = mp.ImageFormat.SRGBA if is_gpu else mp.ImageFormat.SRGB
 
         self._running = True
         self._worker = threading.Thread(target=self._run_worker, name="FaceProviderWorker", daemon=True)
@@ -165,8 +179,12 @@ class FaceProvider:
                 time.sleep(0.01)
                 continue
 
-            rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-            mp_image = self._mp_image_cls(image_format=self._mp_format, data=rgb)
+            if self._use_srgba:
+                rgba = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGBA)
+                mp_image = self._mp_image_cls(image_format=self._mp_format, data=rgba)
+            else:
+                rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+                mp_image = self._mp_image_cls(image_format=self._mp_format, data=rgb)
             timestamp_ms = int((time.monotonic() - self._time_base) * 1000)
 
             try:
@@ -187,12 +205,15 @@ class FaceProvider:
             self._last_processed_ts = ts_ms
         return result, ts_ms
 
+    def _emit_event(self, out_queue: Queue, action: Action) -> None:
+        out_queue.put(InputEvent(action=action, note=self._event_note))
+
     def poll(self, px, out_queue: Queue) -> None:  # type: ignore[override]
-        # Escキー
+        # Backspaceキー
         if px is not None:
             try:
-                if px.btnp(px.KEY_ESCAPE):
-                    out_queue.put(InputEvent(action=Action.QUIT))
+                if px.btnp(px.KEY_BACKSPACE):
+                    self._emit_event(out_queue, Action.QUIT)
             except Exception:
                 pass
 
@@ -220,7 +241,7 @@ class FaceProvider:
             else:
                 blink_active = blink >= self._blink_off
             if blink_active and not self._last_blink_active:
-                out_queue.put(InputEvent(action=Action.ACTION1))
+                self._emit_event(out_queue, Action.ACTION1)
             self._last_blink_active = blink_active
 
         if mouth_open is not None:
@@ -229,7 +250,7 @@ class FaceProvider:
             else:
                 mouth_active = mouth_open >= self._mouth_off
             if mouth_active and not self._last_mouth_active:
-                out_queue.put(InputEvent(action=Action.ACTION2))
+                self._emit_event(out_queue, Action.ACTION2)
             self._last_mouth_active = mouth_active
 
         if smile is not None:
@@ -238,7 +259,7 @@ class FaceProvider:
             else:
                 smile_active = smile >= self._smile_off
             if smile_active and not self._last_smile_active:
-                out_queue.put(InputEvent(action=Action.ACTION3))
+                self._emit_event(out_queue, Action.ACTION3)
             self._last_smile_active = smile_active
 
     def _on_async_result(self, result: Any, _output_image: Any, timestamp_ms: int) -> None:

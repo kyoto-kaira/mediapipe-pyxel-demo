@@ -15,6 +15,7 @@ class App:
         self.events: "Queue[InputEvent]" = Queue()
         self._px = None  # Pyxel モジュール（遅延読み込み）
         self._should_quit = False
+        self._menu_cls = None
 
     # --- ライフサイクル ---
 
@@ -55,12 +56,16 @@ class App:
                 except Exception:
                     pass
 
+        menu_active = self._is_menu_game()
+
         # 入力イベントキューを空にしつつゲームへ転送
         while True:
             try:
                 e = self.events.get_nowait()
             except queue.Empty:
                 break
+            if menu_active and getattr(e, "note", None) != "keyboard":
+                continue
             if e.action == Action.QUIT:
                 # ゲームに先に渡して、ゲーム側で処理するか判断させる
                 try:
@@ -109,3 +114,10 @@ class App:
         except Exception:
             # 描画で例外が起きても画面をクリアして安全に継続
             self._px.cls(0)
+
+    def _is_menu_game(self) -> bool:
+        if self._menu_cls is None:
+            from .games.menu.game import MenuGame
+
+            self._menu_cls = MenuGame
+        return isinstance(self.game, self._menu_cls)
