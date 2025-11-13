@@ -31,9 +31,9 @@ class ReactionType(Enum):
 
 @dataclass(frozen=True)
 class GameConfig:
-    title_text: str = "Speed React"
-    title_prompt: str = "Smile to start!"
-    restart_prompt: str = "Smile to return"
+    title_text: str = "VS React"
+    title_prompt: str = "smile to start!"
+    restart_prompt: str = "smile to return"
     countdown_values: tuple[int, ...] = (3, 2, 1)
     countdown_interval: int = 15        # カウントダウンの数字が切り替わるまでのフレーム数
     total_rounds: int = 5               # 1ゲームの問題数
@@ -190,6 +190,39 @@ class ReactionSession:
         return len(self.questions)
 
 
+@dataclass
+class PlayerRoundState:
+    index: int
+    label: str
+    reaction_registered: Optional[ReactionType] = None
+    evaluation_is_correct: Optional[bool] = None
+    score_applied: bool = False
+
+    def register_reaction(self, reaction: ReactionType) -> None:
+        self.reaction_registered = reaction
+
+
+def resolve_player_index(event: InputEvent, total_players: int) -> Optional[int]:
+    """Extract zero-based player index from the event note if available."""
+    note = getattr(event, "note", None)
+    if isinstance(note, str):
+        digits = "".join(ch for ch in note if ch.isdigit())
+        if digits:
+            try:
+                value = int(digits)
+            except ValueError:
+                value = None
+            else:
+                candidate = value - 1
+                if 0 <= candidate < total_players:
+                    return candidate
+                if 0 <= value < total_players:
+                    return value
+    if total_players == 1:
+        return 0
+    return None
+
+
 class Scene:
 
     def __init__(self, app, manager):
@@ -311,18 +344,24 @@ def draw_centered_text(
 class TitleScene(Scene):
     def __init__(self, app, mgr):
         super().__init__(app, mgr)
-        self.start_requested = False
+        self.ready_players: set[int] = set()
 
     def on_event(self, event: InputEvent) -> None:
         if event.action == Action.ACTION3:
-            self.start_requested = True
+            total_players = getattr(self.app, "player_count", 1)
+            idx = resolve_player_index(event, total_players)
+            if idx is not None:
+                self.ready_players.add(idx)
 
     def update(self) -> None:
-        if self.start_requested:
+        total_players = getattr(self.app, "player_count", 1)
+        if total_players and len(self.ready_players) >= 1:
             questions = ASSET.pick_questions(CONFIG.total_rounds)
             self.mgr.start_session(questions)
-            self.app.score = 0
-            self.start_requested = False
+            reset_scores = getattr(self.app, "reset_scores", None)
+            if callable(reset_scores):
+                reset_scores()
+            self.ready_players.clear()
             SOUND_PLAYER.play("count")
             self.mgr.replace(CountScene(self.app, self.mgr))
 
@@ -330,14 +369,14 @@ class TitleScene(Scene):
         pyxel.cls(0)
         w = self.app.width
         h = self.app.height
-        palette = (1, 1, 2, 2, 4, 4, 5, 5)
+        palette = (8, 8, 7, 7, 6, 6, 12, 12)
         for y in range(h):
             idx = int(y / h * len(palette))
             idx = min(idx, len(palette) - 1)
             pyxel.line(0, y, w, y, palette[idx])
 
-        draw_centered_text(CONFIG.title_text, h // 3 + 1, 0, scale=2, width=w, offset_x=84)
-        draw_centered_text(CONFIG.title_text, h // 3, 7, scale=2, width=w, offset_x=84)
+        draw_centered_text(CONFIG.title_text, h // 3 + 1, 0, scale=2, width=w, offset_x=60)
+        draw_centered_text(CONFIG.title_text, h // 3, 8, scale=2, width=w, offset_x=60)
 
         blink_on = (pyxel.frame_count // CONFIG.prompt_blink) % 2 == 0
         if blink_on:
@@ -386,12 +425,18 @@ class PlayScene(Scene):
         self.line2_shown = False
         self.prompt_active = False
         self.reaction_window_active = False
-        self.reaction_registered: Optional[ReactionType] = None
+        total_players = getattr(self.app, "player_count", 1)
+        labels = getattr(self.app, "player_labels", None)
+        if not labels or len(labels) != total_players:
+            labels = [f"P{i + 1}" for i in range(total_players)]
+        self.player_rounds = [
+            PlayerRoundState(index=i, label=labels[i])
+            for i in range(total_players)
+        ]
         self.result_ready = False
         self.result_timer = 0
         self.time_up_timer = 0
         self.time_up_phase = False
-        self.score_applied = False
         self.scene_loaded = False
         self.scene_bank = 1
         self.current_image_variant = 0
@@ -433,12 +478,14 @@ class PlayScene(Scene):
     def on_event(self, event: InputEvent) -> None:
         if not self.reaction_window_active:
             return
+        player_idx = resolve_player_index(event, len(self.player_rounds))
+        if player_idx is None or player_idx >= len(self.player_rounds):
+            return
+        state = self.player_rounds[player_idx]
         if event.action == Action.ACTION2:
-            if self.reaction_registered != ReactionType.SURPRISE:
-                self.reaction_registered = ReactionType.SURPRISE
+            state.register_reaction(ReactionType.SURPRISE)
         elif event.action == Action.ACTION3:
-            if self.reaction_registered != ReactionType.SMILE:
-                self.reaction_registered = ReactionType.SMILE
+            state.register_reaction(ReactionType.SMILE)
 
     def update(self) -> None:
         self.frames += 1
@@ -480,14 +527,20 @@ class PlayScene(Scene):
                 self._proceed_next()
 
     def _evaluate_reaction(self) -> None:
-        observed = self.reaction_registered or ReactionType.NONE
-        correct = observed == self.expected
-        if correct and not self.score_applied:
-            self.app.score += 1
-            self.score_applied = True
-        self.evaluation_is_correct = correct
-        if not self.result_sound_played:
+        add_score = getattr(self.app, "add_score", None)
+        any_correct = False
+        for state in self.player_rounds:
+            observed = state.reaction_registered or ReactionType.NONE
+            correct = observed == self.expected
+            state.evaluation_is_correct = correct
             if correct:
+                any_correct = True
+                if not state.score_applied:
+                    if callable(add_score):
+                        add_score(state.index, 1)
+                    state.score_applied = True
+        if not self.result_sound_played:
+            if any_correct:
                 self._play_sound("result_good")
             else:
                 self._play_sound("result_bad")
@@ -542,14 +595,16 @@ class PlayScene(Scene):
         if self.time_up_phase:
             draw_centered_text("Time Up!", dialog_y + 54, 10, scale=1, width=w, offset_x=30)
 
-        if self.result_ready:
-            if getattr(self, "evaluation_is_correct", False):
-                color = 11
-                message = "Good Reaction!"
-            else:
-                color = 8
-                message = "Bad Reaction..."
-            draw_centered_text(message, dialog_y + 54, color, scale=1, width=w, offset_x=60)
+        panel_count = max(1, len(self.player_rounds))
+        panel_width = w // panel_count if panel_count else w
+        scores = getattr(self.app, "player_scores", None)
+        for idx, state in enumerate(self.player_rounds):
+            x = panel_width * idx + 6
+            if self.result_ready:
+                draw_text(state.label, x+20, dialog_y + 50, 7)
+                color = 11 if state.evaluation_is_correct else 8
+                message = "Good Reaction!" if state.evaluation_is_correct else "Bad Reaction..."
+                draw_text(message, x, dialog_y + 64, color)
 
 
 class ScoreScene(Scene):
@@ -565,9 +620,31 @@ class ScoreScene(Scene):
         pyxel.cls(0)
         w = self.app.width
         total = self.mgr.session.total if self.mgr.session else CONFIG.total_rounds
-        draw_centered_text("Your reaction score is", 60, 7, width=w, offset_x=85)
-        score_text = f"{self.app.score}/{total}"
-        draw_centered_text(score_text, self.app.height // 2 - 28, 11, scale=3, width=w, offset_x=33)
+        scores = getattr(self.app, "player_scores", None)
+        player_count = getattr(self.app, "player_count", len(scores) if isinstance(scores, list) else 1)
+        labels = getattr(self.app, "player_labels", None)
+        if not labels or len(labels) != player_count:
+            labels = [f"P{i + 1}" for i in range(player_count)]
+        max_score = max(scores) if isinstance(scores, list) and scores else None
+        panel_width = w // max(1, player_count)
+        base_y = self.app.height // 2 - 20
+        for idx in range(player_count):
+            x = panel_width * idx + 6
+            is_winner = (
+                isinstance(scores, list)
+                and isinstance(max_score, int)
+                and idx < len(scores)
+                and scores[idx] == max_score
+                and max_score > 0
+            )
+            title = "Win!" if is_winner and player_count > 1 else ""
+            draw_text(title, x+40, base_y - 48, 10 if is_winner else 7, outline=is_winner)
+            draw_text(labels[idx], x+25, base_y - 30, 7)
+            draw_text("Your score is", x+5, base_y - 12, 7)
+            if isinstance(scores, list) and idx < len(scores):
+                draw_text(f"{scores[idx]}/{total}", x+33, base_y + 10, 11, 2)
+            else:
+                draw_text(f"0/{total}", x+10, base_y + 14, 11)
         blink_on = (pyxel.frame_count // CONFIG.prompt_blink) % 2 == 0
         if blink_on:
             draw_centered_text(CONFIG.restart_prompt, self.app.height - 40, 7, width=w, offset_x=58)

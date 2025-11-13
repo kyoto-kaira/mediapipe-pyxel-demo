@@ -15,10 +15,11 @@ class KeyboardProvider:
     - Esc   -> QUIT
     """
 
-    def __init__(self) -> None:
+    def __init__(self, note: str = "keyboard") -> None:
         self._last_space = False
         self._last_enter = False
         self._last_escape = False
+        self._note = note
 
     def poll(self, px, out_queue: Queue) -> None:  # type: ignore[override]
         # Pyxel が利用可能になった後にキーコードへアクセスする（遅延参照）
@@ -31,10 +32,10 @@ class KeyboardProvider:
         esc = px.btnp(px.KEY_ESCAPE)
 
         if space:
-            out_queue.put(InputEvent(action=Action.ACTION1))
+            out_queue.put(InputEvent(action=Action.ACTION1, note=self._note))
         if enter:
-            out_queue.put(InputEvent(action=Action.ACTION2))
+            out_queue.put(InputEvent(action=Action.ACTION2, note=self._note))
         if shift:
-            out_queue.put(InputEvent(action=Action.ACTION3))
+            out_queue.put(InputEvent(action=Action.ACTION3, note=self._note))
         if esc:
-            out_queue.put(InputEvent(action=Action.QUIT))
+            out_queue.put(InputEvent(action=Action.QUIT, note=self._note))

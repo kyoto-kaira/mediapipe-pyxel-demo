@@ -1,5 +1,5 @@
 from __future__ import annotations
-from ...events import InputEvent
+from ...events import Action, InputEvent
 from .scenes import SceneManager, TitleScene
 
 class ReactionGame:
@@ -19,13 +19,22 @@ class ReactionGame:
 
     # --- game lifecycle ---
     def reset(self) -> None:
+        self.next_game = None
         self.score = 0
         self.mgr = SceneManager()
         self.mgr.push(TitleScene(self, self.mgr))
 
     def on_event(self, event: InputEvent) -> None:
+        if event.action == Action.QUIT:
+            self._return_to_menu()
+            return
         if self.mgr:
             self.mgr.handle_event(event)
+
+    def _return_to_menu(self) -> None:
+        from ..menu.game import MenuGame
+
+        self.next_game = MenuGame()
 
     def update(self):
         if self.mgr.current:
