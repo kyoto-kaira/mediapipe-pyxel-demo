@@ -8,7 +8,7 @@ def main():
     parser.add_argument(
         "--camera-index",
         type=int,
-        default=1,
+        default=0,
         help="使用するカメラ番号（例: 0, 1, 2 ...）"
     )
     parser.add_argument(
@@ -23,7 +23,17 @@ def main():
     output_path = args.output
 
     # カメラを開く
-    cap = cv2.VideoCapture(camera_index)
+    cap = cv2.VideoCapture(camera_index, getattr(cv2, 'CAP_DSHOW', 700))
+    if not cap.isOpened():
+        cap = cv2.VideoCapture(camera_index, getattr(cv2, 'CAP_MSMF', 1400))
+    if not cap.isOpened() and camera_index == 0:
+        try_idx = 1
+        tmp = cv2.VideoCapture(try_idx, getattr(cv2, 'CAP_DSHOW', 700))
+        if not tmp.isOpened():
+            tmp = cv2.VideoCapture(try_idx, getattr(cv2, 'CAP_MSMF', 1400))
+        if tmp.isOpened():
+            cap = tmp
+            camera_index = try_idx
     if not cap.isOpened():
         print(f"カメラ {camera_index} を開けませんでした。", file=sys.stderr)
         sys.exit(1)

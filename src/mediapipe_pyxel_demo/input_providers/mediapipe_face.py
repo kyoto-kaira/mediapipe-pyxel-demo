@@ -56,7 +56,17 @@ class FaceProvider:
             self._event_note = f"camera:{self._camera_index}"
 
         # カメラ初期化（軽量化のためFPS/バッファ等を設定）
-        self._cap = cv2.VideoCapture(self._camera_index)
+        self._cap = cv2.VideoCapture(self._camera_index, getattr(cv2, 'CAP_DSHOW', 700))
+        if not self._cap.isOpened():
+            self._cap = cv2.VideoCapture(self._camera_index, getattr(cv2, 'CAP_MSMF', 1400))
+        if not self._cap.isOpened() and self._camera_index == 0:
+            try_idx = 1
+            tmp = cv2.VideoCapture(try_idx, getattr(cv2, 'CAP_DSHOW', 700))
+            if not tmp.isOpened():
+                tmp = cv2.VideoCapture(try_idx, getattr(cv2, 'CAP_MSMF', 1400))
+            if tmp.isOpened():
+                self._cap = tmp
+                self._camera_index = try_idx
         if not self._cap.isOpened():
             raise RuntimeError(f"Cannot open camera index {camera_index}.")
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width)
@@ -339,3 +349,5 @@ class FaceProvider:
             self.stop()
         except Exception:
             pass
+
+
