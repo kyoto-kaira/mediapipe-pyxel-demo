@@ -1,5 +1,5 @@
 # MediaPipe × Pyxel デモ
-MediaPipeによる表情認識を用いてPyxelで動作するゲームを操作します。
+MediaPipe Face Meshによる顔のランドマーク検出機能と、Pyxelゲームエンジンの組み合わせにより、表情を介したゲーム操作を実現します。
 
 ### SDL2ランタイムのインストール（Pyxel実行に必須）
 PyxelはSDL2を使用します。環境によってはSDL2のランタイムを別途インストールする必要があります。
@@ -28,7 +28,7 @@ uv run -m mediapipe_pyxel_demo
 uv run -m mediapipe_pyxel_demo --help
 ```
 
-- `--game <name>`: ゲーム名を指定します。
+- `--game <name>`: ゲーム名を指定
 - `--provider <name>`: 入力プロバイダ（mediapipe_face or keyboard）
 
 ## ゲームの追加方法
@@ -36,3 +36,6 @@ uv run -m mediapipe_pyxel_demo --help
 `GAME_CLASS`（`on_event(event)`, `update()`, `draw()` を実装するクラス）を公開してください。
 
 または、別パッケージとして公開し、エントリポイント `mediapipe_pyxel_demo.games` に登録することもできます。
+
+## ゲーム画面
+![Spead Reactのゲーム画面](assets\img\spead_react_game.png)
