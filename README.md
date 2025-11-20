@@ -38,4 +38,4 @@ uv run -m mediapipe_pyxel_demo --help
 または、別パッケージとして公開し、エントリポイント `mediapipe_pyxel_demo.games` に登録することもできます。
 
 ## ゲーム画面
-![Spead Reactのゲーム画面](assets/img/spead_react_game.png)
+![Speed Reactのゲーム画面](assets/img/speed_react_game.png)
