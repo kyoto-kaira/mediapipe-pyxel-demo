@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import queue
 from queue import Queue
+import sys
+import traceback
 from typing import Any, List, Optional
 
 from .events import Action, InputEvent
@@ -29,7 +31,7 @@ class App:
                 try:
                     p.start(self.events)
                 except Exception:
-                    pass
+                    traceback.print_exc(file=sys.stderr)
 
         try:
             pyxel.init(
@@ -54,7 +56,13 @@ class App:
                 try:
                     p.poll(self._px, self.events)
                 except Exception:
-                    pass
+                    # ログが毎フレーム大量に出ないよう、各プロバイダにつき一度だけ詳細を出力
+                    if not getattr(p, "_error_logged", False):
+                        traceback.print_exc(file=sys.stderr)
+                        try:
+                            setattr(p, "_error_logged", True)
+                        except Exception:
+                            pass
 
         menu_active = self._is_menu_game()
 
