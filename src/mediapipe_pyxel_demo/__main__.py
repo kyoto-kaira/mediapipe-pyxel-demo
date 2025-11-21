@@ -100,8 +100,9 @@ def main(argv: list[str] | None = None) -> None:
             camera_index_hint = tuple(int(i) for i in attr_hint)
 
     provider_specs: List[str] = list(args.provider) if args.provider else []
+    # 既定では2台のカメラを先行起動（menu時点での権限/初期化を済ませる）
     if not provider_specs:
-        provider_specs = ["mediapipe_face"]
+        provider_specs = ["mediapipe_face", "mediapipe_face"]
     if not any(spec.split(":")[0].strip().lower() == "keyboard" for spec in provider_specs):
         provider_specs.append("keyboard")
 
@@ -124,6 +125,11 @@ def main(argv: list[str] | None = None) -> None:
         fallback_camera = None
         if camera_index_hint and slot < len(camera_index_hint):
             fallback_camera = int(camera_index_hint[slot])
+        else:
+            # 明示指定が無い場合、mediapipe_face はスロット番号をカメラ番号として割り当てる
+            name = spec.split(":")[0].strip().lower()
+            if name == "mediapipe_face":
+                fallback_camera = slot
         player_slot = slot if multi_source else None
         providers.append(_build_provider(spec, player_slot=player_slot, fallback_camera=fallback_camera))
 

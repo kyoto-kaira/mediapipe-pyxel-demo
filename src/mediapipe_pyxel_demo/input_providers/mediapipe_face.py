@@ -90,6 +90,7 @@ class FaceProvider:
         self._frame_skip = max(0, int(frame_skip))
         self._skip_stride = self._frame_skip + 1
         self._time_base = time.monotonic()
+        self._last_sent_ts_ms: int = -1
         self._result_lock = threading.Lock()
         # 最新のblendshape辞書とタイムスタンプのみ保持
         self._latest_result: Optional[Tuple[Optional[Dict[str, float]], int]] = None
@@ -123,12 +124,18 @@ class FaceProvider:
 
             base_opts_kwargs: dict[str, Any] = {"model_asset_path": self._model_path}
             is_gpu = False
-            if self._delegate:
+
+            # Windows では GPU delegate 未サポートのため強制的に CPU を使用
+            delegate_upper = (self._delegate or "").upper()
+            if os.name == "nt" and delegate_upper == "GPU":
+                delegate_upper = "CPU"
+
+            if delegate_upper:
                 # 'CPU' or 'GPU' を想定（未知の値は無視）
                 try:
-                    if self._delegate.upper() == "CPU":
+                    if delegate_upper == "CPU":
                         base_opts_kwargs["delegate"] = python.BaseOptions.Delegate.CPU
-                    elif self._delegate.upper() == "GPU":
+                    elif delegate_upper == "GPU":
                         base_opts_kwargs["delegate"] = python.BaseOptions.Delegate.GPU
                         is_gpu = True
                 except Exception:
@@ -141,7 +148,25 @@ class FaceProvider:
                 running_mode=vision.RunningMode.LIVE_STREAM,
                 result_callback=self._on_async_result,
             )
-            self._detector = vision.FaceLandmarker.create_from_options(options)
+
+            # GPU 未サポートエラー時に CPU にフォールバック
+            try:
+                self._detector = vision.FaceLandmarker.create_from_options(options)
+            except NotImplementedError as e:
+                msg = str(e)
+                if "GPU Delegate is not yet supported" in msg or delegate_upper == "GPU":
+                    base_opts_kwargs["delegate"] = python.BaseOptions.Delegate.CPU
+                    is_gpu = False
+                    options = vision.FaceLandmarkerOptions(
+                        base_options=python.BaseOptions(**base_opts_kwargs),
+                        output_face_blendshapes=True,
+                        num_faces=1,
+                        running_mode=vision.RunningMode.LIVE_STREAM,
+                        result_callback=self._on_async_result,
+                    )
+                    self._detector = vision.FaceLandmarker.create_from_options(options)
+                else:
+                    raise
 
             self._mp_image_cls = mp.Image
             self._use_srgba = is_gpu
@@ -195,11 +220,16 @@ class FaceProvider:
             else:
                 rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
                 mp_image = self._mp_image_cls(image_format=self._mp_format, data=rgb)
+            # MediapipeのLIVE_STREAMは単調増加のタイムスタンプが必須。
+            # ミリ秒に切り捨てるため連続ループで同値になることがあるので補正する。
             timestamp_ms = int((time.monotonic() - self._time_base) * 1000)
+            if timestamp_ms <= self._last_sent_ts_ms:
+                timestamp_ms = self._last_sent_ts_ms + 1
 
             try:
                 # type: ignore[union-attr]
                 self._detector.detect_async(mp_image, timestamp_ms)
+                self._last_sent_ts_ms = timestamp_ms
             except RuntimeError:
                 time.sleep(0.01)
                 continue
